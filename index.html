@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>CodeGen Prompt Interface</title>
+  <link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+  <div class="container">
+    <h1>🧠 Prompt to Microservice Generator</h1>
+    <p>Enter a prompt to generate your custom Python code:</p>
+
+    <textarea id="promptInput" placeholder="e.g., Write a Python script to calculate tax..." rows="6"></textarea>
+    <button type="button" onclick="submitPrompt()">Generate Code</button>
+
+    <div id="responseBox" class="hidden">
+      <h3>Generated Code:</h3>
+      <pre id="codeOutput"></pre> 
+      <h4>Output:</h4>
+      <pre id="outputBox"></pre>
+    </div>
+  </div>
+
+  <div id="loading" class="hidden">
+    <div class="spinner"></div>
+    <p>⏳ Generating code, please wait...</p>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>

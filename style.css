@@ -1,0 +1,89 @@
+body {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background: #f0f2f5;
+  margin: 0;
+  padding: 0;
+}
+
+.container {
+  max-width: 700px;
+  margin: 80px auto;
+  background: white;
+  padding: 30px;
+  border-radius: 16px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+}
+
+h1 {
+  color: #333;
+  margin-bottom: 10px;
+}
+
+p {
+  color: #555;
+}
+
+textarea {
+  width: 100%;
+  padding: 12px;
+  margin-top: 10px;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  font-size: 16px;
+  resize: vertical;
+}
+
+button {
+  margin-top: 15px;
+  padding: 12px 20px;
+  font-size: 16px;
+  background: #007bff;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.3s;
+}
+
+button:hover {
+  background: #0056b3;
+}
+
+#responseBox {
+  margin-top: 30px;
+  background: #f4f4f4;
+  padding: 20px;
+  border-radius: 10px;
+  overflow-x: auto;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* Loading spinner and message */
+#loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  margin-top: 30px;
+  font-weight: bold;
+  color: #007bff;
+}
+
+.spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid rgba(0, 123, 255, 0.2);
+  border-top-color: #007bff;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-bottom: 10px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
