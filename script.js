@@ -3,8 +3,9 @@ window.addEventListener("beforeunload", () => {
   console.warn("[RELOAD DETECTED] Page is reloading...");
 });
 
-async function submitPrompt() {
+async function submitPrompt(event) {
   console.log("[submitPrompt] Function triggered.");
+  event.preventDefault(); // Prevent default form submission
 
   const prompt = document.getElementById('promptInput').value.trim();
   const loading = document.getElementById('loading');

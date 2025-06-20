@@ -10,10 +10,10 @@
   <div class="container">
     <h1>🧠 Prompt to Microservice Generator</h1>
     <p>Enter a prompt to generate your custom Python code:</p>
-
+    <form onsubmit="submitPrompt(event)">
     <textarea id="promptInput" placeholder="e.g., Write a Python script to calculate tax..." rows="6"></textarea>
-    <button type="button" onclick="submitPrompt()">Generate Code</button>
-
+    <button type="submit" onclick="submitPrompt(event)" >Generate Code</button>
+    </form>
     <div id="responseBox" class="hidden">
       <h3>Generated Code:</h3>
       <pre id="codeOutput"></pre> 
