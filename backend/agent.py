@@ -3,7 +3,7 @@ import httpx
 import logging
 import tempfile
 import subprocess
-from typing import TypedDict, Optional, Annotated
+from typing import TypedDict, Optional, Annotated, List, Dict
 from langchain_core.runnables import RunnableLambda
 from langgraph.graph import StateGraph
 import py_compile
@@ -15,11 +15,9 @@ logger = logging.getLogger("agent")
 
 # --- Utility ---
 def clean_markdown_wrappers(text: str) -> str:
-    # Removes all markdown code block wrappers and language specifiers
     return re.sub(r"(```[a-z]*\n?|```)", "", text.strip(), flags=re.IGNORECASE)
 
 def extract_first_code_block(text: str) -> str:
-    # Extract content between first ```python and ``` if they exist
     match = re.search(r"```(?:python)?\n(.*?)\n```", text, re.DOTALL)
     if match:
         return match.group(1).strip()
@@ -36,6 +34,9 @@ class CodeState(TypedDict, total=False):
     output: Optional[str]
     syntax_attempts: int
     test_regen_attempts: int
+    test_cases: Optional[List[Dict]]
+    test_results: Optional[List[Dict]]
+    test_stats: Optional[Dict]
 
 # --- Step 1: Plan and generate clean code only ---
 def plan_strategy_generate_code(state: CodeState) -> CodeState:
@@ -59,7 +60,7 @@ def sum_natural(n):
         response = httpx.post(
             "http://127.0.0.1:11434/api/chat",
             json={
-                "model": "llama3.2:3b",  # Using llama3 instead of deepseek
+                "model": "llama3.2:3b",
                 "messages": [
                     {
                         "role": "system", 
@@ -69,7 +70,7 @@ def sum_natural(n):
                 ],
                 "stream": False,
                 "options": {
-                    "temperature": 0.2,  # Lower temperature for more deterministic output
+                    "temperature": 0.2,
                     "num_ctx": 2048
                 }
             },
@@ -77,7 +78,6 @@ def sum_natural(n):
         )
         raw_content = response.json()["message"]["content"]
         
-        # Enhanced cleaning
         code = extract_first_code_block(raw_content)
         code = clean_markdown_wrappers(code)
         code = re.sub(r'^.*?(?=(def |class |print |import |from |[a-zA-Z_][a-zA-Z0-9_]*\s*=))', '', code, flags=re.DOTALL)
@@ -146,7 +146,7 @@ Fix ONLY the code below and return JUST the corrected code with NO other text:
                 ],
                 "stream": False,
                 "options": {
-                    "temperature": 0.1  # Very low temperature for fixes
+                    "temperature": 0.1
                 }
             },
             timeout=500
@@ -169,10 +169,11 @@ Fix ONLY the code below and return JUST the corrected code with NO other text:
 def check(state: CodeState) -> CodeState:
     code = state["generated_code"]
     prompt = f"""
-Write comprehensive Python test cases for the following code.
+Write comprehensive Python test cases for the following code using unittest.
 Include both positive and negative test cases.
 Return ONLY the test code with NO explanations or additional text.
 Include print statements showing expected vs actual results.
+Make sure to include setUp and tearDown methods if needed.
 
 Code to test:
 {code}
@@ -198,7 +199,7 @@ Code to test:
         test_code = extract_first_code_block(raw_test_content)
         test_code = clean_markdown_wrappers(test_code).strip()
         
-        # Extract and store only the relevant test cases
+        # Parse test cases from the generated code
         test_cases = []
         current_test = None
         for line in test_code.split('\n'):
@@ -206,15 +207,22 @@ Code to test:
             if line.startswith('def test_'):
                 if current_test:
                     test_cases.append(current_test)
-                current_test = {"name": line, "assertions": []}
-            elif line.startswith('assert ') or line.startswith('print('):
+                current_test = {
+                    "name": line.split('(')[0].replace('def ', ''),
+                    "assertions": [],
+                    "prints": []
+                }
+            elif line.startswith('self.assert') or line.startswith('assert '):
                 if current_test:
                     current_test["assertions"].append(line)
+            elif line.startswith('print('):
+                if current_test:
+                    current_test["prints"].append(line)
         
         if current_test:
             test_cases.append(current_test)
         
-        logger.info("[check] Extracted test cases:")
+        logger.info("[check] Extracted %d test cases:", len(test_cases))
         for test in test_cases:
             logger.info(f"Test: {test['name']}")
             for assertion in test['assertions']:
@@ -223,8 +231,14 @@ Code to test:
         return {
             **state,
             "test_code": test_code,
-            "test_cases": test_cases,  # Store structured test cases
-            "test_regen_attempts": state.get("test_regen_attempts", 0) + 1
+            "test_cases": test_cases,
+            "test_regen_attempts": state.get("test_regen_attempts", 0) + 1,
+            "test_stats": {
+                "total": len(test_cases),
+                "passed": 0,
+                "failed": 0,
+                "errors": 0
+            }
         }
     except Exception as e:
         logger.error("[check] Test generation failed: %s", e)
@@ -245,16 +259,44 @@ def run_tests(state: CodeState) -> CodeState:
             temp.write(combined)
             temp_path = temp.name
         
-        result = subprocess.run(["python", temp_path], capture_output=True, text=True, timeout=20)  # Increased timeout
+        result = subprocess.run(["python", temp_path], capture_output=True, text=True, timeout=20)
         
         output = result.stdout + result.stderr
         logger.info("[run_tests] Test execution output:\n%s", output)
         
         # Parse test results
         test_results = []
+        passed = 0
+        failed = 0
+        errors = 0
+        
+        # Parse unittest output
         for line in output.split('\n'):
-            if "Expected:" in line or "Actual:" in line or "Test:" in line or "FAILED" in line:
-                test_results.append(line.strip())
+            if line.startswith('FAIL: ') or line.startswith('ERROR: '):
+                test_name = line.split(' ')[1]
+                test_results.append({
+                    "name": test_name,
+                    "status": "FAILED" if line.startswith('FAIL: ') else "ERROR",
+                    "message": line
+                })
+                if line.startswith('FAIL: '):
+                    failed += 1
+                else:
+                    errors += 1
+            elif line.startswith('Ran ') and 'tests in ' in line:
+                # Extract test count from summary line
+                match = re.search(r'Ran (\d+) tests? in', line)
+                if match:
+                    total = int(match.group(1))
+                    passed = total - failed - errors
+        
+        # Update test stats
+        test_stats = {
+            "total": state["test_stats"]["total"],
+            "passed": passed,
+            "failed": failed,
+            "errors": errors
+        }
         
         if result.returncode == 0:
             logger.info("[run_tests] ALL TESTS PASSED")
@@ -262,22 +304,18 @@ def run_tests(state: CodeState) -> CodeState:
                 **state,
                 "error": None,
                 "output": output,
-                "test_results": test_results,  # Store detailed results
+                "test_results": test_results,
+                "test_stats": test_stats,
                 "test_status": "PASSED"
             }
         else:
             logger.warning("[run_tests] SOME TESTS FAILED")
-            failure_lines = [line for line in output.split('\n') if 'FAIL' in line or 'Error' in line]
-            if failure_lines:
-                logger.warning("[run_tests] Test failures detected:")
-                for failure in failure_lines:
-                    logger.warning("[run_tests] %s", failure)
-            
             return {
                 **state,
                 "error": f"TestFailure: {output}",
                 "output": output,
-                "test_results": test_results,  # Store detailed results
+                "test_results": test_results,
+                "test_stats": test_stats,
                 "test_status": "FAILED"
             }
     except Exception as e:
@@ -296,21 +334,27 @@ def run_code(state: CodeState) -> CodeState:
     code = state.get("fixed_code") or state.get("generated_code")
     temp_path = None
     
-    # Prepare final output with test details
+    # Prepare final output
     final_output = []
     
-    # Add test cases if available (formatted nicely)
-    if state.get("test_cases"):
-        final_output.append("\n=== TEST CASES EXECUTED ===\n")
-        for test in state["test_cases"]:
-            final_output.append(f"\nTest Function: {test['name']}")
-            for assertion in test['assertions']:
-                final_output.append(f"  - {assertion}")
+    # Add test statistics
+    if state.get("test_stats"):
+        stats = state["test_stats"]
+        final_output.append("\n=== TEST STATISTICS ===\n")
+        final_output.append(f"Total tests: {stats['total']}")
+        final_output.append(f"Passed: {stats['passed']}")
+        final_output.append(f"Failed: {stats['failed']}")
+        final_output.append(f"Errors: {stats['errors']}")
+        final_output.append(f"Success rate: {stats['passed']/stats['total']*100:.1f}%")
     
-    # Add test results if available (formatted)
+    # Add detailed test results
     if state.get("test_results"):
-        final_output.append("\n\n=== TEST RESULTS ===\n")
-        final_output.extend(state["test_results"])
+        final_output.append("\n\n=== DETAILED TEST RESULTS ===\n")
+        for result in state["test_results"]:
+            status = "✅ PASSED" if result.get("status") == "PASSED" else "❌ FAILED" if result.get("status") == "FAILED" else "❗ ERROR"
+            final_output.append(f"\n{status} {result['name']}")
+            if "message" in result:
+                final_output.append(f"  - {result['message']}")
     
     # Add execution output if available
     if state.get("output"):
@@ -324,7 +368,7 @@ def run_code(state: CodeState) -> CodeState:
     if state.get("error"):
         final_output.append(f"\nError Details: {state['error']}")
     else:
-        final_output.append("\nAll tests completed successfully")
+        final_output.append("\nAll operations completed")
     
     # Combine all output
     formatted_output = "\n".join(final_output)
@@ -378,7 +422,12 @@ def build_agent():
     def test_decider(state: CodeState):
         if state.get("test_regen_attempts", 0) >= 3:
             return "final_run"  # Give up after 3 attempts
-        return "final_run" if not state.get("error") else "fix_code"
+        if not state.get("error"):
+            return "final_run"
+        # Only try to fix if we have specific error info
+        if "TestFailure" in state.get("error", ""):
+            return "fix_code"
+        return "final_run"
 
     builder.add_conditional_edges("validate_syntax", syntax_decider, {
         "check": "check",
