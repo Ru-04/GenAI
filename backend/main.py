@@ -21,14 +21,15 @@ def generate():
         final_state = agent.invoke(state)
 
         output = final_state.get("output", "")
-        cleaned_code = final_state.get("generated_code", "")
+        fixed_code = final_state.get("fixed_code", final_state.get("generated_code", ""))
         error = final_state.get("error", "")
-
+        logging.info("Final output: %s", output)
         return jsonify({
             "output": output,
-            "code": cleaned_code,
+            "code": fixed_code,
             "error": error
         })
+
     except Exception as e:
         logging.error(f"Agent failed: {str(e)}")
         return jsonify({"error": str(e)}), 500
